@@ -5,116 +5,118 @@ import threading
 import queue
 import time
 
-def detect_faces(frame, net, output_layers):
-    height, width, channels = frame.shape
-    blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
-    net.setInput(blob)
-    outs = net.forward(output_layers)
+class FaceRecognitionSystem:
+    def __init__(self, video_source=0, model_weights="yolov4-tiny.weights", model_config="yolov4-tiny.cfg"):
+        self.net = cv2.dnn.readNet(model_weights, model_config)
+        self.layer_names = self.net.getLayerNames()
+        self.output_layers = [self.layer_names[i - 1] for i in self.net.getUnconnectedOutLayers()]
 
-    faces = []
-    for out in outs:
-        for detection in out:
-            scores = detection[5:]
-            class_id = np.argmax(scores)
-            confidence = scores[class_id]
-            if confidence > 0.5 and class_id == 0:
-                center_x = int(detection[0] * width)
-                center_y = int(detection[1] * height)
-                w = int(detection[2] * width)
-                h = int(detection[3] * height)
+        self.face_dict = {}
+        self.cap = cv2.VideoCapture(video_source)
 
-                x = int(center_x - w / 2)
-                y = int(center_y - h / 2)
+        self.frame_skip = 1
+        self.display_queue = queue.Queue()
+        self.exit_flag = threading.Event()
 
-                faces.append((x, y, w, h))
+    def detect_faces(self, frame):
+        height, width, channels = frame.shape
+        blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+        self.net.setInput(blob)
+        outs = self.net.forward(self.output_layers)
 
-    return faces
+        faces = []
+        for out in outs:
+            for detection in out:
+                scores = detection[5:]
+                class_id = np.argmax(scores)
+                confidence = scores[class_id]
+                if confidence > 0.5 and class_id == 0:
+                    center_x = int(detection[0] * width)
+                    center_y = int(detection[1] * height)
+                    w = int(detection[2] * width)
+                    h = int(detection[3] * height)
 
-def process_frame(frame, net, output_layers, face_dict, display_queue):
-    faces = detect_faces(frame, net, output_layers)
+                    x = int(center_x - w / 2)
+                    y = int(center_y - h / 2)
 
-    current_frame_positions = {}
+                    faces.append((x, y, w, h))
 
-    for (x, y, w, h) in faces:
-        face_image = frame[y:y + h, x:x + w]
+        return faces
 
-        if face_image.shape[0] > 0 and face_image.shape[1] > 0:
-            face_image_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-            face_encoding = face_recognition.face_encodings(face_image_rgb)
+    def process_frame(self, frame):
+        faces = self.detect_faces(frame)
 
-            if face_encoding:
-                matches = face_recognition.compare_faces(list(face_dict.values()), face_encoding[0], tolerance=0.7)
-                match_indices = [i for i, match in enumerate(matches) if match]
+        current_frame_positions = {}
 
-                if match_indices:
-                    first_match_index = match_indices[0]
-                    face_id = list(face_dict.keys())[first_match_index]
+        for (x, y, w, h) in faces:
+            face_image = frame[y:y + h, x:x + w]
 
-                    if face_id in current_frame_positions:
-                        continue
+            if face_image.shape[0] > 0 and face_image.shape[1] > 0:
+                face_image_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
+                face_encoding = face_recognition.face_encodings(face_image_rgb)
 
-                    current_frame_positions[face_id] = (x, y, x + w, y + h)
+                if face_encoding:
+                    matches = face_recognition.compare_faces(list(self.face_dict.values()), face_encoding[0], tolerance=0.7)
+                    match_indices = [i for i, match in enumerate(matches) if match]
 
-                else:
-                    face_id = len(face_dict) + 1
-                    face_dict[face_id] = face_encoding[0] if face_encoding else None
+                    if match_indices:
+                        first_match_index = match_indices[0]
+                        face_id = list(self.face_dict.keys())[first_match_index]
 
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(frame, f"Person {face_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                        if face_id in current_frame_positions:
+                            continue
 
-    display_queue.put(frame)
+                        current_frame_positions[face_id] = (x, y, x + w, y + h)
 
-def video_capture_thread(cap, net, output_layers, face_dict, frame_skip, display_queue, exit_flag):
-    frame_count = 0
-    while not exit_flag.is_set():
-        ret, frame = cap.read()
-        frame_count += 1
-        if display_queue.qsize() > 10:
-            time.sleep(0.01)
-            continue
+                    else:
+                        face_id = len(self.face_dict) + 1
+                        self.face_dict[face_id] = face_encoding[0] if face_encoding else None
 
-        if frame_count % frame_skip != 0:
-            continue
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.putText(frame, f"Person {face_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-        process_frame(frame, net, output_layers, face_dict, display_queue)
+        self.display_queue.put(frame)
 
-    cap.release()
+    def video_capture_thread(self):
+        frame_count = 0
+        while not self.exit_flag.is_set():
+            ret, frame = self.cap.read()
+            frame_count += 1
+            if self.display_queue.qsize() > 10:
+                time.sleep(0.01)
+                continue
 
-# net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
-net = cv2.dnn.readNet("yolov4-tiny.weights", "yolov4-tiny.cfg")
+            if frame_count % self.frame_skip != 0:
+                continue
 
-layer_names = net.getLayerNames()
-output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
+            self.process_frame(frame)
 
-face_dict = {}
+        self.cap.release()
 
-cap = cv2.VideoCapture(0)
+    def start_system(self):
+        video_thread = threading.Thread(target=self.video_capture_thread, daemon=True)
+        video_thread.start()
 
-frame_skip = 1
-display_queue = queue.Queue()
-
-exit_flag = threading.Event()
-
-video_thread1 = threading.Thread(target=video_capture_thread, args=(cap, net, output_layers, face_dict, frame_skip, display_queue, exit_flag), daemon=True)
-video_thread1.start()
-
-try:
-    while not exit_flag.is_set():
         try:
-            frame = display_queue.get_nowait()
+            while not self.exit_flag.is_set():
+                try:
+                    frame = self.display_queue.get_nowait()
 
-            cv2.imshow("Face Recognition", frame)
+                    cv2.imshow("Face Recognition", frame)
 
-            key = cv2.waitKey(1)
-            if key & 0xFF == ord('q'):
-                exit_flag.set()
-                break
+                    key = cv2.waitKey(1)
+                    if key & 0xFF == ord('q'):
+                        self.exit_flag.set()
+                        break
 
-        except queue.Empty:
-            pass
-        time.sleep(0.01)
+                except queue.Empty:
+                    pass
+                time.sleep(0.01)
 
+        finally:
+            video_thread.join()
+            cv2.destroyAllWindows()
 
-finally:
-    video_thread1.join()
-    cv2.destroyAllWindows()
+if __name__ == "__main__":
+    face_recognition_system = FaceRecognitionSystem()
+    face_recognition_system.start_system()
