@@ -1,0 +1,51 @@
+import psycopg2
+import numpy as np
+
+class Database:
+    def __init__(self, db_params):
+        self.db_params = db_params
+        self.connection = psycopg2.connect(**self.db_params)
+        self.cursor = self.connection.cursor()
+
+    def create_table(self):
+        create_table_query = '''
+            CREATE TABLE IF NOT EXISTS face_dict (
+                face_id SERIAL PRIMARY KEY,
+                encoding BYTEA
+            );
+        '''
+        self.cursor.execute(create_table_query)
+        self.connection.commit()
+
+    def insert_face_dict(self, face_dict):
+        for face_id, encoding in face_dict.items():
+            if encoding.all():
+                insert_query = '''
+                    INSERT INTO face_dict (face_id, encoding) VALUES (%s, %s)
+                    ON CONFLICT (face_id) DO NOTHING;
+                '''
+                self.cursor.execute(insert_query, (face_id, psycopg2.Binary(encoding.tobytes())))
+        self.connection.commit()
+
+    def update_face_encoding(self, face_id, encoding):
+        update_query = "UPDATE face_dict SET encoding = %s WHERE face_id = %s;"
+        self.cursor.execute(update_query, (psycopg2.Binary(encoding.tobytes()), face_id))
+        self.connection.commit()
+
+    def load_face_encodings(self):
+        select_query = "SELECT face_id, encoding FROM face_dict;"
+        self.cursor.execute(select_query)
+        rows = self.cursor.fetchall()
+
+        face_dict = {}
+        for row in rows:
+            face_id, encoding_bytes = row
+            encoding_array = np.frombuffer(encoding_bytes, dtype=np.uint8)
+            encoding = np.frombuffer(encoding_array, dtype=np.float64)
+            face_dict[face_id] = encoding
+
+        return face_dict
+
+    def close(self):
+        self.cursor.close()
+        self.connection.close()
