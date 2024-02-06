@@ -9,7 +9,8 @@ from settings import DB_PARAMS, MODEL_WEIGHTS, MODEL_CONFIG, VIDEO_SOURCE
 
 
 class FaceRecognitionSystem:
-    def __init__(self, video_source=VIDEO_SOURCE, model_weights=MODEL_WEIGHTS, model_config=MODEL_CONFIG, db_params=DB_PARAMS):
+    def __init__(self, video_source=VIDEO_SOURCE, model_weights=MODEL_WEIGHTS, model_config=MODEL_CONFIG,
+                 db_params=DB_PARAMS):
         self.db = Database(db_params)
 
         self.net = cv2.dnn.readNet(model_weights, model_config)
@@ -61,13 +62,14 @@ class FaceRecognitionSystem:
                 face_encoding = face_recognition.face_encodings(face_image_rgb)
 
                 if face_encoding:
-                    matches = face_recognition.compare_faces(list(self.face_dict.values()), face_encoding[0],
-                                                             tolerance=0.7)
+                    matches = face_recognition.compare_faces([encoding for encoding, _ in self.face_dict.values()],
+                                                             face_encoding[0], tolerance=0.7)
                     match_indices = [i for i, match in enumerate(matches) if match]
 
                     if match_indices:
                         first_match_index = match_indices[0]
                         face_id = list(self.face_dict.keys())[first_match_index]
+                        _, name = self.face_dict[face_id]
 
                         if face_id in current_frame_positions:
                             continue
@@ -75,16 +77,15 @@ class FaceRecognitionSystem:
                         current_frame_positions[face_id] = (x, y, x + w, y + h)
                         self.db.update_face_encoding(face_id, face_encoding[0], f"faces/face_{face_id}.jpg")
                         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                        cv2.putText(frame, f"Person {face_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0),
-                                    2)
+                        cv2.putText(frame, name if name else f"Person {face_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.9, (0, 255, 0), 2)
 
                     else:
                         face_id = len(self.face_dict) + 1
-                        self.face_dict[face_id] = face_encoding[0] if face_encoding else None
+                        self.face_dict[face_id] = (face_encoding[0] if face_encoding else None, None)
 
-                        # Save the face image and store the path
                         cv2.imwrite(f"faces/face_{face_id}.jpg", face_image)
-                        self.db.insert_face_dict(face_id, face_encoding[0], f"faces/face_{face_id}.jpg")
+                        self.db.insert_face_dict(face_id, (face_encoding[0], None), f"faces/face_{face_id}.jpg")
 
                         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
                         cv2.putText(frame, f"Person {face_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255),
@@ -128,7 +129,6 @@ class FaceRecognitionSystem:
         finally:
             video_thread.join()
             self.release_resources()
-
 
     def release_resources(self):
         self.cap.release()
