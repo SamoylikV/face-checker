@@ -73,8 +73,7 @@ class FaceRecognitionSystem:
                             continue
 
                         current_frame_positions[face_id] = (x, y, x + w, y + h)
-                        self.db.update_face_encoding(face_id, face_encoding[0])
-
+                        self.db.update_face_encoding(face_id, face_encoding[0], f"faces/face_{face_id}.jpg")
                         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                         cv2.putText(frame, f"Person {face_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0),
                                     2)
@@ -82,6 +81,11 @@ class FaceRecognitionSystem:
                     else:
                         face_id = len(self.face_dict) + 1
                         self.face_dict[face_id] = face_encoding[0] if face_encoding else None
+
+                        # Save the face image and store the path
+                        cv2.imwrite(f"faces/face_{face_id}.jpg", face_image)
+                        self.db.insert_face_dict(face_id, face_encoding[0], f"faces/face_{face_id}.jpg")
+
                         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
                         cv2.putText(frame, f"Person {face_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255),
                                     2)
@@ -99,6 +103,8 @@ class FaceRecognitionSystem:
             if frame_count % self.frame_skip != 0:
                 continue
             self.process_frame(frame)
+            for face_id, encoding in self.face_dict.items():
+                self.db.insert_face_dict(face_id, encoding, f"faces/face_{face_id}.jpg")
         self.cap.release()
 
     def start_system(self):
@@ -109,14 +115,13 @@ class FaceRecognitionSystem:
             while not self.exit_flag.is_set():
                 try:
                     frame = self.display_queue.get_nowait()
-                    self.db.insert_face_dict(self.face_dict)
                     cv2.imshow("Face Recognition", frame)
 
                     key = cv2.waitKey(1)
                     if key & 0xFF == ord('q'):
                         self.exit_flag.set()
                         break
-                except queue.Empty:
+                except Exception as e:
                     pass
                 time.sleep(0.01)
 

@@ -11,25 +11,28 @@ class Database:
         create_table_query = '''
             CREATE TABLE IF NOT EXISTS face_dict (
                 face_id SERIAL PRIMARY KEY,
-                encoding BYTEA
+                encoding BYTEA,
+                image_path TEXT,
+                name TEXT DEFAULT NULL,
+                appearances INT DEFAULT 0
             );
         '''
         self.cursor.execute(create_table_query)
         self.connection.commit()
 
-    def insert_face_dict(self, face_dict):
-        for face_id, encoding in face_dict.items():
-            if encoding.all():
-                insert_query = '''
-                    INSERT INTO face_dict (face_id, encoding) VALUES (%s, %s)
-                    ON CONFLICT (face_id) DO NOTHING;
-                '''
-                self.cursor.execute(insert_query, (face_id, psycopg2.Binary(encoding.tobytes())))
+
+    def insert_face_dict(self, face_id, encoding, image_path):
+        if encoding.all():
+            insert_query = '''
+                INSERT INTO face_dict (face_id, encoding, image_path) VALUES (%s, %s, %s)
+                ON CONFLICT (face_id) DO NOTHING;
+            '''
+            self.cursor.execute(insert_query, (face_id, psycopg2.Binary(encoding.tobytes()), image_path))
         self.connection.commit()
 
-    def update_face_encoding(self, face_id, encoding):
-        update_query = "UPDATE face_dict SET encoding = %s WHERE face_id = %s;"
-        self.cursor.execute(update_query, (psycopg2.Binary(encoding.tobytes()), face_id))
+    def update_face_encoding(self, face_id, encoding, image_path):
+        update_query = "UPDATE face_dict SET encoding = %s, image_path = %s WHERE face_id = %s;"
+        self.cursor.execute(update_query, (psycopg2.Binary(encoding.tobytes()), image_path, face_id))
         self.connection.commit()
 
     def load_face_encodings(self):
