@@ -1,26 +1,12 @@
-import telebot
 from telebot import types
-from database import Database
-from settings import DB_PARAMS, TOKEN, MAX_ITEMS_PER_PAGE
-
-
-class UserState:
-    def __init__(self, role='user'):
-        self.sent_messages = []
-        self.current_face_id_message = None
-        self.face_id_to_message_id = {}
-        self.current_page_message_id = None
-        self.role = role
-
-
-bot = telebot.TeleBot(TOKEN)
-db = Database(DB_PARAMS)
-user_states = {}
-
+from shared import bot, db, user_states, MAX_ITEMS_PER_PAGE
+from user_state import UserState
+import os
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id, username, tf = extract_user_info(message)
+
     if not tf:
         if bot.get_me().id != user_id:
             role = db.get_user_role(user_id)
@@ -28,6 +14,7 @@ def start(message):
                 role = 'user'
                 print(user_id)
                 db.insert_user(user_id, username)
+
             if user_id not in user_states:
                 user_states[user_id] = UserState(role)
             else:
@@ -37,12 +24,15 @@ def start(message):
                 user_states[user_id] = UserState()
     else:
         pass
+
     markup = types.InlineKeyboardMarkup()
     item1 = types.InlineKeyboardButton('Посмотреть информацию', callback_data='view')
     markup.add(item1)
-    if user_states[user_id].role == 'admin':
+
+    if not tf or user_states[user_id].role == 'admin':
         item2 = types.InlineKeyboardButton('Админ панель', callback_data='admin_panel')
         markup.add(item2)
+
     sent_message = bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
     user_states[user_id].sent_messages.append(sent_message.message_id)
 
@@ -54,6 +44,7 @@ def handle_admin_panel(message):
     markup = types.InlineKeyboardMarkup()
     for user in users:
         user_id, username, role = user
+        username = username if username else 'Unknown'
         item = types.InlineKeyboardButton(username, callback_data=f'user_roles:{user_id}')
         markup.add(item)
     sent_message = bot.send_message(message.chat.id, "Выберите пользователя:", reply_markup=markup)
@@ -114,6 +105,8 @@ def callback_inline(call):
     elif call.data.startswith('change_role'):
         user_id, role = call.data.split(':')[1:]
         db.change_user_role(user_id, role)
+        if user_id in user_states:
+            user_states[user_id].role = role
         bot.send_message(call.message.chat.id, f"Роль пользователя успешно изменена на {role}")
         start(call.message)
 
@@ -132,7 +125,8 @@ def handle_view(message, page, current_state):
         item2 = types.InlineKeyboardButton('Изменить картинку', callback_data=f'change_image:{face_id}')
         markup.add(item1, item2)
         caption = f"{name if name else f'Face ID: {face_id}'}\nПоявлений: {appearances}"
-        sent_message = bot.send_photo(message.chat.id, open(f"faces/face_{face_id}.jpg", 'rb'), caption=caption,
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"../faces/face_{face_id}.jpg")
+        sent_message = bot.send_photo(message.chat.id, open(file_path, 'rb'), caption=caption,
                                       reply_markup=markup)
         current_state.sent_messages.append(sent_message.message_id)
         current_state.face_id_to_message_id[face_id] = sent_message.message_id
@@ -172,9 +166,9 @@ def change_image(message, user_id, face_id):
     current_state = user_states.get(user_id, UserState())
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded_file = bot.download_file(file_info.file_path)
-    with open(f"faces/face_{face_id}.jpg", 'wb') as new_file:
+    with open(f"../faces/face_{face_id}.jpg", 'wb') as new_file:
         new_file.write(downloaded_file)
-    db.update_face_image(face_id, f"faces/face_{face_id}.jpg")
+    db.update_face_image(face_id, f"../faces/face_{face_id}.jpg")
     delete_previous_messages(message.chat.id, current_state)
     bot.send_message(message.chat.id, "Картинка успешно изменена")
     start(message)
@@ -207,6 +201,3 @@ def extract_user_info(message):
         tf = False
 
     return user_id, username, tf
-
-
-bot.polling(none_stop=True)

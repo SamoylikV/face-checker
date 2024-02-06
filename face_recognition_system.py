@@ -109,6 +109,7 @@ class FaceRecognitionSystem:
         self.cap.release()
 
     def start_system(self):
+
         video_thread = threading.Thread(target=self.video_capture_thread, daemon=True)
         video_thread.start()
 
@@ -123,7 +124,7 @@ class FaceRecognitionSystem:
                         self.exit_flag.set()
                         break
                 except Exception as e:
-                    pass
+                    print(e)
                 time.sleep(0.01)
 
         finally:
