@@ -115,6 +115,13 @@ def handle_view(message, page, current_state):
     user_id = message.from_user.id
     face_dict = db.load_face_encodings_ordered_by_appearances()
     face_ids = list(face_dict.keys())
+    if not face_ids:
+        bot.send_message(message.chat.id, "Нет данных для отображения")
+        menu_button = types.InlineKeyboardButton('Меню', callback_data='menu')
+        markup = types.InlineKeyboardMarkup()
+        markup.add(menu_button)
+        sent_message = bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+        current_state.current_page_message_id = sent_message.message_id
     start = (page - 1) * MAX_ITEMS_PER_PAGE
     end = start + MAX_ITEMS_PER_PAGE
 
