@@ -1,11 +1,21 @@
-import cv2, random, string
+import cv2, random, string, os, threading, time
 from faces.faces import loadFaces, saveFaces
+
+class ReturnableThread(threading.Thread):
+    def __init__(self, func) -> None:
+        # execute the base constructor
+        threading.Thread.__init__(self)
+        # Call function in thread
+        self.res = func
 
 class cv2fcr:
     def __init__(self):
         self.stream = None
         self.net = cv2.dnn.readNet("data/ocv2fcr.pb", "data/ocv2fcr.pbtxt")
-        self.faces = self.cv2fcrLoadFaces()
+        rth = ReturnableThread(self.cv2fcrLoadFaces())
+        rth.start()
+        rth.join()
+        self.faces = rth.res
 
     def cv2fcrLoadFaces(self):
         data, e = loadFaces()
@@ -17,7 +27,7 @@ class cv2fcr:
     def cv2fcrUpdateFaces(self):
         self.faces = self.cv2fcrLoadFaces()
 
-    def cv2FaceRecognition(self, frame, tresh=0.7):
+    def cv2FaceRecognition(self, frame, tresh=0.85):
         try:
             # Получаем высоту и ширину
             frameData = [frame.shape[0], frame.shape[1]]
@@ -52,43 +62,71 @@ class cv2fcr:
         except Exception as e:
             return None, None, None, repr(e)
 
-    def cv2FaceCollections(self, frame):
+    def cv2FaceCollect(self, frame):
         try:
             if self.faces:
                 id = None
                 for i in self.faces.keys():
-                    proto = cv2.imread(self.faces[i]['proto'])
-                    height, width = proto.shape[:2]
-                    frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
-                    if cv2.matchTemplate(frame, proto, cv2.TM_CCOEFF_NORMED).max() > 0.75:
+                    match = self.cv2FineMatch(frame, self.faces[i]['proto'])
+                    if match > 0.8:
                         id = i
-                    elif cv2.matchTemplate(frame, proto, cv2.TM_CCOEFF_NORMED).max() < 0.05:
-                        id = False
+                    elif match < 0.8 and match > 0.4:
+                        if self.faces[i]['similar']:
+                            for j in self.faces[i]['similar']:
+                                match_s = self.cv2FineMatch(frame, j)
+                                if match_s > 0.8:
+                                    id = i
+                                elif match_s < 0.1:
+                                    self.cv2SimilarDaemon(frame, self.faces[i])
+                                    saveFaces(self.faces)
+                                else:
+                                    id = False
+                        else:
+                            self.cv2SimilarDaemon(frame, self.faces[i])
+                            saveFaces(self.faces)
+                    elif match < 0.4 and match > 0.1:
+                        return None, None
                     else:
-                        pass
+                        id = False
                 if id == False:
-                    id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(20))
-                    cv2.imwrite(f'faces/img/{id}.jpg', frame)
-                    data = {'shape': frame.shape, 'proto': f'faces/img/{id}.jpg', 'name': ''}
-                    self.faces[id] = data
-                    saveFaces(self.faces)
-                    print('New undefined person!')
-                    return self.faces[id]['name'], None
+                    res = self.cv2PersonDaemon(frame)
+                    return res
                 elif id == None:
                     return None, None
                 else:
                     return self.faces[id]['name'], None
-
             else:
-                id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(20))
-                cv2.imwrite(f'faces/img/{id}.jpg', frame)
-                data = {'shape': frame.shape, 'proto': f'faces/img/{id}.jpg', 'name': ''}
-                self.faces[id] = data
-                saveFaces(self.faces)
-                print('New undefined person!')
-                return self.faces[id]['name'], None
+                res = self.cv2PersonDaemon(frame)
+                return res
         except Exception as e:
             return None, repr(e)
+
+    def cv2FineMatch(self, frame, face):
+        proto = cv2.imread(face)
+        height, width = proto.shape[:2]
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        match = cv2.matchTemplate(frame, proto, cv2.TM_CCOEFF_NORMED).max()
+        return match
+
+    def cv2PersonDaemon(self, frame):
+        id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(20))
+        folder = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(10))
+        path = os.path.join(os.getcwd(), f'faces\\img\\{folder}')
+        os.mkdir(path)
+        cv2.imwrite(f'{path}\\{id}.jpg', frame)
+        data = {'shape': frame.shape, 'proto': f'{path}\\{id}.jpg', 'name': '', 'similar': []}
+        self.faces[id] = data
+        saveFaces(self.faces)
+        print('New undefined person!')
+        return self.faces[id]['name'], None
+
+    def cv2SimilarDaemon(self, frame, obj):
+        tmp = obj['proto'].split('\\')
+        tmp.pop()
+        path = '\\'.join(tmp)
+        id_s = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(20))
+        cv2.imwrite(f'{path}\\{id_s}.jpg', frame)
+        obj['similar'].append(f'{path}\\{id_s}.jpg')
 
     def cv2StreamFCR(self):
         self.stream = cv2.VideoCapture(0)
@@ -108,7 +146,7 @@ class cv2fcr:
             else:
                 # Если лицо есть
                 if faceBoxes:
-                    res, e = self.cv2FaceCollections(face)
+                    res, e = self.cv2FaceCollect(face)
                     self.cv2fcrUpdateFaces()
                     if e:
                         print(e)
